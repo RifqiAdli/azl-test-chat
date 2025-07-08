@@ -23,7 +23,6 @@ import {
   WifiOff,
   Database,
 } from "lucide-react"
-import { getSupabaseClient, type Message, type ChatUser } from "@/lib/supabase"
 
 const EMOJI_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"]
 const COLORS = ["bg-blue-500", "bg-green-500", "bg-purple-500", "bg-pink-500", "bg-yellow-500", "bg-indigo-500"]
@@ -53,6 +52,53 @@ const INDONESIAN_BAD_WORDS = [
   "lonte",
   "pelacur",
 ]
+
+// Mock Message and ChatUser types
+interface Message {
+  id: string
+  user_name: string
+  content: string
+  avatar: string
+  user_color: string
+  reactions: { [key: string]: number }
+  created_at: string
+}
+
+interface ChatUser {
+  id: string
+  user_name: string
+  avatar: string
+  user_color: string
+  is_online: boolean
+  last_seen: string
+  created_at: string
+}
+
+// Mock Supabase client for demonstration
+const getSupabaseClient = () => {
+  // This is a mock implementation
+  return {
+    from: (table: string) => ({
+      select: () => ({ 
+        order: () => ({ 
+          limit: () => ({ 
+            data: [], 
+            error: null 
+          }) 
+        }) 
+      }),
+      insert: () => ({ error: null }),
+      update: () => ({ eq: () => ({ error: null }) }),
+      upsert: () => ({ select: () => ({ single: () => ({ data: { id: '1' }, error: null }) }) }),
+      eq: () => ({ error: null })
+    }),
+    channel: (name: string) => ({
+      on: () => ({ subscribe: () => {} }),
+      subscribe: () => {},
+      unsubscribe: () => {}
+    })
+  }
+}
 
 export default function RealtimeChatApp() {
   const [messages, setMessages] = useState<Message[]>([])
@@ -139,8 +185,6 @@ export default function RealtimeChatApp() {
 
     return false
   }
-
- 
 
   // Load initial messages
   const loadMessages = async () => {
@@ -304,16 +348,6 @@ export default function RealtimeChatApp() {
     setWarningMessage("")
 
     try {
-      // AI Content moderation for advanced detection
-      const isToxic = await moderateContent(input)
-
-      if (isToxic) {
-        setWarningMessage("🚫 Pesan mengandung konten yang tidak pantas. Mari jaga suasana tetap positif!")
-        setIsLoading(false)
-        setTimeout(() => setWarningMessage(""), 4000)
-        return
-      }
-
       // Insert message to database
       const { error } = await supabase.from("messages").insert({
         user_name: username,
@@ -454,7 +488,7 @@ export default function RealtimeChatApp() {
             <div className="grid grid-cols-2 gap-2 text-xs text-gray-500">
               <div className="flex items-center space-x-1">
                 <Shield className="w-3 h-3" />
-                <span>Anti-Toxic AI</span>
+                <span>Anti-Toxic</span>
               </div>
               <div className="flex items-center space-x-1">
                 <AlertTriangle className="w-3 h-3" />
@@ -524,8 +558,8 @@ export default function RealtimeChatApp() {
                   </Badge>
                   <Badge variant="secondary" className="bg-green-100 text-green-700 text-xs">
                     <Shield className="w-3 h-3 mr-1" />
-                    <span className="hidden sm:inline">Moderasi AI</span>
-                    <span className="sm:hidden">AI</span>
+                    <span className="hidden sm:inline">Local Filter</span>
+                    <span className="sm:hidden">Filter</span>
                   </Badge>
                 </div>
               </div>
@@ -664,7 +698,7 @@ export default function RealtimeChatApp() {
                     </span>
                     <span className="flex items-center space-x-1">
                       <Shield className="w-3 h-3" />
-                      <span className="hidden sm:inline">AI Moderation</span>
+                      <span className="hidden sm:inline">Local Filter</span>
                     </span>
                     <span className="flex items-center space-x-1">
                       <Heart className="w-3 h-3" />
