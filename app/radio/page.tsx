@@ -24,7 +24,8 @@ import { getSupabaseClient } from "@/lib/supabase"
 import Link from "next/link"
 
 // Add this import at the top
-import { v4 as uuidv4 } from "uuid"
+// Remove this line:
+// import { v4 as uuidv4 } from "uuid"
 
 interface RadioUser {
   id: string
@@ -52,6 +53,15 @@ interface PeerConnection {
   callsign: string
   connection: RTCPeerConnection
   audioElement: HTMLAudioElement
+}
+
+// Add this function after the interfaces
+const generateUUID = (): string => {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === "x" ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
 }
 
 const RADIO_CHANNELS = [
@@ -490,7 +500,10 @@ export default function RadioPage() {
       await initializeVoiceConnection()
 
       // Generate proper UUID instead of callsign_timestamp
-      const userId = uuidv4() // This generates proper UUID like "123e4567-e89b-12d3-a456-426614174000"
+      // Replace this line:
+      // const userId = uuidv4() // This generates proper UUID like "123e4567-e89b-12d3-a456-426614174000"
+      // With this:
+      const userId = generateUUID() // Generate proper UUID without external package
       setCurrentUserId(userId)
 
       // Insert user into radio users table
