@@ -29,9 +29,10 @@ import {
   MicOff,
   Play,
   Pause,
-  Volume2,
   Sparkles,
   Shield,
+  Hash,
+  AtSignIcon as At,
 } from "lucide-react"
 import { getSupabaseClient, type Message, type ChatUser } from "@/lib/supabase"
 
@@ -69,6 +70,8 @@ interface ExtendedMessage extends Message {
   media_url?: string | null
   media_name?: string | null
   duration?: number | null
+  mentions?: string[]
+  hashtags?: string[]
 }
 
 export default function RealtimeChatApp() {
@@ -89,6 +92,10 @@ export default function RealtimeChatApp() {
   const [selectedImage, setSelectedImage] = useState<{ url: string; name?: string } | null>(null)
   const [replyingTo, setReplyingTo] = useState<ExtendedMessage | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [showMentionSuggestions, setShowMentionSuggestions] = useState(false)
+  const [mentionSuggestions, setMentionSuggestions] = useState<ChatUser[]>([])
+  const [selectedHashtag, setSelectedHashtag] = useState<string | null>(null)
+  const [allHashtags, setAllHashtags] = useState<string[]>([])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const userColor = useRef("")
@@ -96,6 +103,7 @@ export default function RealtimeChatApp() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
+  const inputRef = useRef<HTMLInputElement>(null)
 
   // Initialize Supabase client
   const [supabase, setSupabase] = useState<ReturnType<typeof getSupabaseClient> | null>(null)
@@ -118,6 +126,17 @@ export default function RealtimeChatApp() {
 
   useEffect(() => {
     scrollToBottom()
+  }, [messages])
+
+  // Extract hashtags from all messages
+  useEffect(() => {
+    const hashtags = new Set<string>()
+    messages.forEach((message) => {
+      if (message.hashtags) {
+        message.hashtags.forEach((tag) => hashtags.add(tag))
+      }
+    })
+    setAllHashtags(Array.from(hashtags))
   }, [messages])
 
   // Generate user avatar color
@@ -167,6 +186,86 @@ export default function RealtimeChatApp() {
 
     return false
   }
+
+  // Parse mentions and hashtags from text
+  const parseTagsFromText = (text: string) => {
+    const mentions = text.match(/@(\w+)/g)?.map((m) => m.substring(1)) || []
+    const hashtags = text.match(/#(\w+)/g)?.map((h) => h.substring(1)) || []
+    return { mentions, hashtags }
+  }
+
+  // Handle input change for mention suggestions
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setInput(value)
+
+    // Check for @ mentions
+    const lastAtIndex = value.lastIndexOf("@")
+    if (lastAtIndex !== -1) {
+      const afterAt = value.substring(lastAtIndex + 1)
+      if (afterAt.length > 0 && !afterAt.includes(" ")) {
+        const filtered = users.filter((user) => user.user_name.toLowerCase().includes(afterAt.toLowerCase()))
+        setMentionSuggestions(filtered)
+        setShowMentionSuggestions(true)
+      } else {
+        setShowMentionSuggestions(false)
+      }
+    } else {
+      setShowMentionSuggestions(false)
+    }
+  }
+
+  // Insert mention
+  const insertMention = (user: ChatUser) => {
+    const lastAtIndex = input.lastIndexOf("@")
+    const beforeAt = input.substring(0, lastAtIndex)
+    const afterAt = input.substring(lastAtIndex + 1)
+    const spaceIndex = afterAt.indexOf(" ")
+    const afterMention = spaceIndex !== -1 ? afterAt.substring(spaceIndex) : ""
+
+    setInput(`${beforeAt}@${user.user_name} ${afterMention}`)
+    setShowMentionSuggestions(false)
+    inputRef.current?.focus()
+  }
+
+  // Render text with mentions and hashtags
+  const renderTextWithTags = (text: string) => {
+    const parts = text.split(/(@\w+|#\w+)/g)
+    return parts.map((part, index) => {
+      if (part.startsWith("@")) {
+        const username = part.substring(1)
+        return (
+          <span
+            key={index}
+            className="bg-blue-100 text-blue-700 px-1 rounded font-medium cursor-pointer hover:bg-blue-200 transition-colors"
+            onClick={() => {
+              // Could add user profile popup here
+              console.log("Clicked mention:", username)
+            }}
+          >
+            {part}
+          </span>
+        )
+      } else if (part.startsWith("#")) {
+        const hashtag = part.substring(1)
+        return (
+          <span
+            key={index}
+            className="bg-purple-100 text-purple-700 px-1 rounded font-medium cursor-pointer hover:bg-purple-200 transition-colors"
+            onClick={() => setSelectedHashtag(hashtag)}
+          >
+            {part}
+          </span>
+        )
+      }
+      return part
+    })
+  }
+
+  // Filter messages by hashtag
+  const filteredMessages = selectedHashtag
+    ? messages.filter((msg) => msg.hashtags?.includes(selectedHashtag))
+    : messages
 
   // Convert file to base64
   const fileToBase64WithTimeout = (file: File): Promise<string> => {
@@ -438,7 +537,15 @@ export default function RealtimeChatApp() {
         .limit(100)
 
       if (error) throw error
-      setMessages(data || [])
+
+      // Parse tags from existing messages
+      const messagesWithTags =
+        data?.map((msg) => {
+          const { mentions, hashtags } = parseTagsFromText(msg.content)
+          return { ...msg, mentions, hashtags }
+        }) || []
+
+      setMessages(messagesWithTags)
     } catch (error) {
       console.error("Error loading messages:", error)
     }
@@ -493,11 +600,15 @@ export default function RealtimeChatApp() {
       .channel("messages")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
         const newMessage = payload.new as ExtendedMessage
-        setMessages((prev) => [...prev, newMessage])
+        const { mentions, hashtags } = parseTagsFromText(newMessage.content)
+        const messageWithTags = { ...newMessage, mentions, hashtags }
+        setMessages((prev) => [...prev, messageWithTags])
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages" }, (payload) => {
         const updatedMessage = payload.new as ExtendedMessage
-        setMessages((prev) => prev.map((msg) => (msg.id === updatedMessage.id ? updatedMessage : msg)))
+        const { mentions, hashtags } = parseTagsFromText(updatedMessage.content)
+        const messageWithTags = { ...updatedMessage, mentions, hashtags }
+        setMessages((prev) => prev.map((msg) => (msg.id === messageWithTags.id ? messageWithTags : msg)))
       })
       .subscribe()
 
@@ -634,6 +745,9 @@ export default function RealtimeChatApp() {
         return
       }
 
+      // Parse mentions and hashtags
+      const { mentions, hashtags } = parseTagsFromText(input)
+
       // Insert message to database with reply data
       const messageData: any = {
         user_name: username,
@@ -641,6 +755,8 @@ export default function RealtimeChatApp() {
         avatar: username.charAt(0).toUpperCase(),
         user_color: userColor.current,
         reactions: {},
+        mentions: mentions.length > 0 ? mentions : null,
+        hashtags: hashtags.length > 0 ? hashtags : null,
       }
 
       // Add reply data if replying
@@ -700,7 +816,7 @@ export default function RealtimeChatApp() {
           </Button>
         </div>
       </div>
-      <ScrollArea className="h-[calc(100%-100px)] p-4">
+      <ScrollArea className="h-[calc(100%-200px)] p-4">
         <div className="space-y-3">
           {users.map((user) => (
             <div
@@ -726,6 +842,42 @@ export default function RealtimeChatApp() {
           ))}
         </div>
       </ScrollArea>
+
+      {/* Hashtags Section */}
+      {allHashtags.length > 0 && (
+        <div className="p-4 border-t border-slate-200">
+          <div className="flex items-center space-x-2 mb-3">
+            <Hash className="w-4 h-4 text-purple-600" />
+            <span className="font-semibold text-slate-800">Trending Tags</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {allHashtags.slice(0, 10).map((tag) => (
+              <Badge
+                key={tag}
+                variant="secondary"
+                className={`cursor-pointer transition-colors ${
+                  selectedHashtag === tag
+                    ? "bg-purple-600 text-white"
+                    : "bg-purple-100 text-purple-700 hover:bg-purple-200"
+                }`}
+                onClick={() => setSelectedHashtag(selectedHashtag === tag ? null : tag)}
+              >
+                #{tag}
+              </Badge>
+            ))}
+          </div>
+          {selectedHashtag && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedHashtag(null)}
+              className="mt-2 text-xs text-slate-500"
+            >
+              Clear filter
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   )
 
@@ -792,19 +944,19 @@ export default function RealtimeChatApp() {
             </Button>
             <div className="grid grid-cols-2 gap-3 text-sm text-slate-600">
               <div className="flex items-center space-x-2 p-3 bg-slate-50 rounded-lg">
-                <ImageIcon className="w-4 h-4 text-blue-500" />
-                <span>HD Images</span>
+                <At className="w-4 h-4 text-blue-500" />
+                <span>@Mentions</span>
               </div>
               <div className="flex items-center space-x-2 p-3 bg-slate-50 rounded-lg">
-                <Volume2 className="w-4 h-4 text-green-500" />
-                <span>Audio Files</span>
+                <Hash className="w-4 h-4 text-purple-500" />
+                <span>#Hashtags</span>
               </div>
               <div className="flex items-center space-x-2 p-3 bg-slate-50 rounded-lg">
                 <Mic className="w-4 h-4 text-red-500" />
                 <span>Voice Record</span>
               </div>
               <div className="flex items-center space-x-2 p-3 bg-slate-50 rounded-lg">
-                <Shield className="w-4 h-4 text-purple-500" />
+                <Shield className="w-4 h-4 text-green-500" />
                 <span>AI Safe</span>
               </div>
             </div>
@@ -860,7 +1012,9 @@ export default function RealtimeChatApp() {
                   </div>
                   <div>
                     <h1 className="font-bold text-xl">ChatVerse Pro</h1>
-                    <p className="text-white/80 text-sm">Multimedia Real-time Chat</p>
+                    <p className="text-white/80 text-sm">
+                      {selectedHashtag ? `#${selectedHashtag}` : "Multimedia Real-time Chat"}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
@@ -880,7 +1034,7 @@ export default function RealtimeChatApp() {
               </div>
             </CardHeader>
 
-            <CardContent className="flex flex-col h-[calc(100vh-140px)] px-6 py-4">
+            <CardContent className="flex flex-col h-[calc(100vh-140px)] px-6 py-4 relative">
               {/* Warning Message */}
               {warningMessage && (
                 <Alert className="mb-4 border-orange-200 bg-orange-50">
@@ -902,7 +1056,7 @@ export default function RealtimeChatApp() {
               {/* Messages */}
               <ScrollArea className="flex-1 pr-2">
                 <div className="space-y-6 pb-4">
-                  {messages.map((message) => (
+                  {filteredMessages.map((message) => (
                     <div key={message.id} className="group">
                       <div
                         className={`flex items-start space-x-3 ${
@@ -956,8 +1110,14 @@ export default function RealtimeChatApp() {
                               </div>
                             )}
 
-                            {/* Text Content */}
-                            <p className="text-sm leading-relaxed mb-2">{message.content}</p>
+                            {/* Text Content with Tags */}
+                            <div className="text-sm leading-relaxed mb-2">
+                              {message.user_name === username ? (
+                                <span className="text-white">{renderTextWithTags(message.content)}</span>
+                              ) : (
+                                renderTextWithTags(message.content)
+                              )}
+                            </div>
 
                             {/* Image Content */}
                             {message.media_type === "image" && message.media_url && (
@@ -1093,6 +1253,29 @@ export default function RealtimeChatApp() {
                   </div>
                 )}
 
+                {/* Mention Suggestions */}
+                {showMentionSuggestions && mentionSuggestions.length > 0 && (
+                  <div className="absolute bottom-20 left-6 right-6 bg-white border border-slate-200 rounded-lg shadow-lg z-10 max-h-40 overflow-y-auto">
+                    {mentionSuggestions.map((user) => (
+                      <button
+                        key={user.id}
+                        onClick={() => insertMention(user)}
+                        className="w-full flex items-center space-x-3 p-3 hover:bg-slate-50 transition-colors text-left"
+                      >
+                        <Avatar className="w-8 h-8">
+                          <AvatarFallback className={`${user.user_color} text-white text-sm`}>
+                            {user.avatar}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <div className="font-medium text-slate-800">@{user.user_name}</div>
+                          <div className="text-xs text-slate-500">Click to mention</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {/* Drag & Drop Overlay */}
                 {isDragOver && (
                   <div className="text-center py-8">
@@ -1129,9 +1312,10 @@ export default function RealtimeChatApp() {
                   </Button>
 
                   <Input
-                    placeholder="Ketik pesan kamu... (Ctrl+V untuk paste gambar)"
+                    ref={inputRef}
+                    placeholder="Ketik pesan... (@mention #hashtag)"
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={handleInputChange}
                     onKeyPress={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
                     onPaste={handlePaste}
                     className="flex-1 border-2 focus:border-purple-400 h-12 rounded-xl text-base"
@@ -1155,8 +1339,12 @@ export default function RealtimeChatApp() {
                   <span className="font-medium">{input.length}/300 karakter</span>
                   <div className="flex items-center space-x-4">
                     <span className="flex items-center space-x-1">
-                      <ImageIcon className="w-3 h-3" />
-                      <span className="hidden sm:inline">Drag & Drop</span>
+                      <At className="w-3 h-3" />
+                      <span className="hidden sm:inline">@Mentions</span>
+                    </span>
+                    <span className="flex items-center space-x-1">
+                      <Hash className="w-3 h-3" />
+                      <span className="hidden sm:inline">#Hashtags</span>
                     </span>
                     <span className="flex items-center space-x-1">
                       <Mic className="w-3 h-3" />
