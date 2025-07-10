@@ -23,6 +23,9 @@ import {
 import { getSupabaseClient } from "@/lib/supabase"
 import Link from "next/link"
 
+// Add this import at the top
+import { v4 as uuidv4 } from "uuid"
+
 interface RadioUser {
   id: string
   callsign: string
@@ -486,14 +489,14 @@ export default function RadioPage() {
       // Initialize voice connection first
       await initializeVoiceConnection()
 
-      // Generate unique user ID
-      const userId = `${callsign}_${Date.now()}`
+      // Generate proper UUID instead of callsign_timestamp
+      const userId = uuidv4() // This generates proper UUID like "123e4567-e89b-12d3-a456-426614174000"
       setCurrentUserId(userId)
 
       // Insert user into radio users table
       const { error } = await supabase.from("radio_users").upsert(
         {
-          id: userId,
+          id: userId, // Now using proper UUID
           callsign: callsign.toUpperCase(),
           channel: currentChannel,
           is_transmitting: false,
