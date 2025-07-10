@@ -13,7 +13,6 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import {
   MessageCircle,
   Users,
-  Shield,
   Send,
   AlertTriangle,
   Heart,
@@ -22,6 +21,13 @@ import {
   Wifi,
   WifiOff,
   Database,
+  ImageIcon,
+  Paperclip,
+  Mic,
+  MicOff,
+  Play,
+  Pause,
+  Volume2,
 } from "lucide-react"
 import { getSupabaseClient, type Message, type ChatUser } from "@/lib/supabase"
 
@@ -54,8 +60,15 @@ const INDONESIAN_BAD_WORDS = [
   "pelacur",
 ]
 
+interface ExtendedMessage extends Message {
+  media_type?: "image" | "audio" | "voice" | null
+  media_url?: string | null
+  media_name?: string | null
+  duration?: number | null
+}
+
 export default function RealtimeChatApp() {
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<ExtendedMessage[]>([])
   const [input, setInput] = useState("")
   const [username, setUsername] = useState("")
   const [isJoined, setIsJoined] = useState(false)
@@ -66,8 +79,16 @@ export default function RealtimeChatApp() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [currentUserId, setCurrentUserId] = useState<string>("")
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingTime, setRecordingTime] = useState(0)
+  const [playingAudio, setPlayingAudio] = useState<string | null>(null)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const userColor = useRef("")
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
 
   // Initialize Supabase client
   const [supabase, setSupabase] = useState<ReturnType<typeof getSupabaseClient> | null>(null)
@@ -140,7 +161,181 @@ export default function RealtimeChatApp() {
     return false
   }
 
-  // Content moderation with AI
+  // Convert file to base64
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.readAsDataURL(file)
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = (error) => reject(error)
+    })
+  }
+
+  // Handle file upload
+  const handleFileUpload = async (file: File) => {
+    if (!supabase) return
+
+    try {
+      setIsLoading(true)
+
+      // Check file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        setWarningMessage("❌ File terlalu besar! Maksimal 10MB.")
+        setTimeout(() => setWarningMessage(""), 3000)
+        return
+      }
+
+      // Convert to base64 for storage
+      const base64Data = await fileToBase64(file)
+
+      let mediaType: "image" | "audio" = "image"
+      if (file.type.startsWith("audio/")) {
+        mediaType = "audio"
+      }
+
+      // Insert message with media
+      const { error } = await supabase.from("messages").insert({
+        user_name: username,
+        content: mediaType === "image" ? "📷 Mengirim gambar" : "🎵 Mengirim audio",
+        avatar: username.charAt(0).toUpperCase(),
+        user_color: userColor.current,
+        reactions: {},
+        media_type: mediaType,
+        media_url: base64Data,
+        media_name: file.name,
+      })
+
+      if (error) throw error
+      setLastMessageTime(Date.now())
+    } catch (error) {
+      console.error("Error uploading file:", error)
+      setWarningMessage("❌ Gagal mengirim file. Coba lagi!")
+      setTimeout(() => setWarningMessage(""), 3000)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Start voice recording
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = mediaRecorder
+      audioChunksRef.current = []
+
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunksRef.current.push(event.data)
+      }
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/wav" })
+        const audioFile = new File([audioBlob], `voice-${Date.now()}.wav`, { type: "audio/wav" })
+
+        // Upload voice message
+        await handleVoiceUpload(audioFile, recordingTime)
+
+        // Stop all tracks
+        stream.getTracks().forEach((track) => track.stop())
+      }
+
+      mediaRecorder.start()
+      setIsRecording(true)
+      setRecordingTime(0)
+
+      // Start timer
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1)
+      }, 1000)
+    } catch (error) {
+      console.error("Error starting recording:", error)
+      setWarningMessage("❌ Gagal mengakses mikrofon. Periksa permission!")
+      setTimeout(() => setWarningMessage(""), 3000)
+    }
+  }
+
+  // Stop voice recording
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop()
+      setIsRecording(false)
+
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current)
+      }
+    }
+  }
+
+  // Handle voice upload
+  const handleVoiceUpload = async (audioFile: File, duration: number) => {
+    if (!supabase) return
+
+    try {
+      setIsLoading(true)
+
+      const base64Data = await fileToBase64(audioFile)
+
+      // Insert voice message
+      const { error } = await supabase.from("messages").insert({
+        user_name: username,
+        content: `🎤 Pesan suara (${duration}s)`,
+        avatar: username.charAt(0).toUpperCase(),
+        user_color: userColor.current,
+        reactions: {},
+        media_type: "voice",
+        media_url: base64Data,
+        media_name: audioFile.name,
+        duration: duration,
+      })
+
+      if (error) throw error
+      setLastMessageTime(Date.now())
+    } catch (error) {
+      console.error("Error uploading voice:", error)
+      setWarningMessage("❌ Gagal mengirim pesan suara. Coba lagi!")
+      setTimeout(() => setWarningMessage(""), 3000)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Play/pause audio
+  const toggleAudio = (messageId: string, audioUrl: string) => {
+    const audioElement = document.getElementById(`audio-${messageId}`) as HTMLAudioElement
+
+    if (playingAudio === messageId) {
+      audioElement.pause()
+      setPlayingAudio(null)
+    } else {
+      // Pause other audios
+      if (playingAudio) {
+        const currentAudio = document.getElementById(`audio-${playingAudio}`) as HTMLAudioElement
+        currentAudio?.pause()
+      }
+
+      audioElement.play()
+      setPlayingAudio(messageId)
+
+      audioElement.onended = () => {
+        setPlayingAudio(null)
+      }
+    }
+  }
+
+  // Format recording time
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs.toString().padStart(2, "0")}`
+  }
+
+  // Format message time
+  const formatMessageTime = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  }
 
   // Load initial messages
   const loadMessages = async () => {
@@ -208,11 +403,11 @@ export default function RealtimeChatApp() {
     const messagesSubscription = supabase
       .channel("messages")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
-        const newMessage = payload.new as Message
+        const newMessage = payload.new as ExtendedMessage
         setMessages((prev) => [...prev, newMessage])
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages" }, (payload) => {
-        const updatedMessage = payload.new as Message
+        const updatedMessage = payload.new as ExtendedMessage
         setMessages((prev) => prev.map((msg) => (msg.id === updatedMessage.id ? updatedMessage : msg)))
       })
       .subscribe()
@@ -221,7 +416,7 @@ export default function RealtimeChatApp() {
     const usersSubscription = supabase
       .channel("chat_users")
       .on("postgres_changes", { event: "*", schema: "public", table: "chat_users" }, () => {
-        loadUsers() // Reload users on any change
+        loadUsers()
       })
       .subscribe()
 
@@ -304,7 +499,7 @@ export default function RealtimeChatApp() {
     setWarningMessage("")
 
     try {
-      // Langsung pakai local Indonesian profanity check (super cepat!)
+      // Local Indonesian profanity check
       const isToxic = checkIndonesianProfanity(input)
 
       if (isToxic) {
@@ -352,13 +547,6 @@ export default function RealtimeChatApp() {
     } catch (error) {
       console.error("Error adding reaction:", error)
     }
-  }
-
-  const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString("id-ID", {
-      hour: "2-digit",
-      minute: "2-digit",
-    })
   }
 
   // Users Sidebar Component
@@ -428,9 +616,9 @@ export default function RealtimeChatApp() {
             </div>
             <div>
               <CardTitle className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                Real-Time Hangout Chat
+                Multimedia Chat
               </CardTitle>
-              <p className="text-gray-600 mt-2 text-sm">Chat real-time dengan Supabase Database</p>
+              <p className="text-gray-600 mt-2 text-sm">Chat dengan gambar, audio & voice recording</p>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -449,30 +637,30 @@ export default function RealtimeChatApp() {
               className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
               disabled={!username.trim()}
             >
-              Gabung Chat Real-Time 🚀
+              Gabung Chat Multimedia 🚀
             </Button>
             <div className="grid grid-cols-2 gap-2 text-xs text-gray-500">
               <div className="flex items-center space-x-1">
-                <Shield className="w-3 h-3" />
-                <span>Anti-Toxic AI</span>
+                <ImageIcon className="w-3 h-3" />
+                <span>Send Images</span>
               </div>
               <div className="flex items-center space-x-1">
-                <AlertTriangle className="w-3 h-3" />
-                <span>Anti-Spam</span>
+                <Volume2 className="w-3 h-3" />
+                <span>Send Audio</span>
               </div>
               <div className="flex items-center space-x-1">
-                <Heart className="w-3 h-3" />
-                <span>Bahasa Sopan</span>
+                <Mic className="w-3 h-3" />
+                <span>Voice Record</span>
               </div>
               <div className="flex items-center space-x-1">
                 <Database className="w-3 h-3" />
-                <span>Supabase DB</span>
+                <span>Real-time</span>
               </div>
             </div>
             <Alert className="border-green-200 bg-green-50">
               <Database className="h-4 w-4 text-green-600" />
               <AlertDescription className="text-green-700 text-xs">
-                ✅ Terhubung ke Supabase! Chat akan sync real-time di semua device.
+                ✅ Multimedia chat dengan Supabase real-time sync!
               </AlertDescription>
             </Alert>
           </CardContent>
@@ -512,7 +700,7 @@ export default function RealtimeChatApp() {
                     </SheetTrigger>
                   </Sheet>
                   <MessageCircle className="w-5 h-5 text-blue-500" />
-                  <span className="font-semibold text-lg">Real-Time Chat</span>
+                  <span className="font-semibold text-lg">Multimedia Chat</span>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Badge
@@ -522,10 +710,10 @@ export default function RealtimeChatApp() {
                     {isConnected ? <Wifi className="w-3 h-3 mr-1" /> : <WifiOff className="w-3 h-3 mr-1" />}
                     <span className="hidden sm:inline">{isConnected ? "Connected" : "Disconnected"}</span>
                   </Badge>
-                  <Badge variant="secondary" className="bg-green-100 text-green-700 text-xs">
-                    <Shield className="w-3 h-3 mr-1" />
-                    <span className="hidden sm:inline">Filter Lokal</span>
-                    <span className="sm:hidden">Local</span>
+                  <Badge variant="secondary" className="bg-purple-100 text-purple-700 text-xs">
+                    <ImageIcon className="w-3 h-3 mr-1" />
+                    <span className="hidden sm:inline">Multimedia</span>
+                    <span className="sm:hidden">Media</span>
                   </Badge>
                 </div>
               </div>
@@ -537,6 +725,16 @@ export default function RealtimeChatApp() {
                 <Alert className="mb-4 border-orange-200 bg-orange-50">
                   <AlertTriangle className="h-4 w-4 text-orange-600" />
                   <AlertDescription className="text-orange-700 text-sm">{warningMessage}</AlertDescription>
+                </Alert>
+              )}
+
+              {/* Recording Indicator */}
+              {isRecording && (
+                <Alert className="mb-4 border-red-200 bg-red-50">
+                  <Mic className="h-4 w-4 text-red-600 animate-pulse" />
+                  <AlertDescription className="text-red-700 text-sm">
+                    🎤 Merekam suara... {formatTime(recordingTime)}
+                  </AlertDescription>
                 </Alert>
               )}
 
@@ -568,7 +766,7 @@ export default function RealtimeChatApp() {
                           <div className="flex items-center space-x-2 mb-1">
                             <span className="font-medium text-sm text-gray-700 truncate">{message.user_name}</span>
                             <span className="text-xs text-gray-400 flex-shrink-0">
-                              {formatTime(message.created_at)}
+                              {formatMessageTime(message.created_at)}
                             </span>
                           </div>
 
@@ -581,7 +779,53 @@ export default function RealtimeChatApp() {
                                   : "bg-white border border-gray-200 text-gray-800 shadow-sm"
                             }`}
                           >
-                            <p className="text-sm leading-relaxed">{message.content}</p>
+                            {/* Text Content */}
+                            <p className="text-sm leading-relaxed mb-2">{message.content}</p>
+
+                            {/* Image Content */}
+                            {message.media_type === "image" && message.media_url && (
+                              <div className="mt-2">
+                                <img
+                                  src={message.media_url || "/placeholder.svg"}
+                                  alt="Shared image"
+                                  className="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90"
+                                  onClick={() => window.open(message.media_url, "_blank")}
+                                />
+                              </div>
+                            )}
+
+                            {/* Audio Content */}
+                            {(message.media_type === "audio" || message.media_type === "voice") &&
+                              message.media_url && (
+                                <div className="mt-2 flex items-center space-x-2 bg-gray-100 rounded-lg p-2">
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => toggleAudio(message.id, message.media_url!)}
+                                    className="p-1 h-8 w-8"
+                                  >
+                                    {playingAudio === message.id ? (
+                                      <Pause className="w-4 h-4" />
+                                    ) : (
+                                      <Play className="w-4 h-4" />
+                                    )}
+                                  </Button>
+                                  <div className="flex-1">
+                                    <div className="text-xs text-gray-600">
+                                      {message.media_type === "voice" ? "🎤 Voice Message" : "🎵 Audio File"}
+                                    </div>
+                                    {message.duration && (
+                                      <div className="text-xs text-gray-500">{formatTime(message.duration)}</div>
+                                    )}
+                                  </div>
+                                  <audio
+                                    id={`audio-${message.id}`}
+                                    src={message.media_url}
+                                    preload="metadata"
+                                    className="hidden"
+                                  />
+                                </div>
+                              )}
                           </div>
 
                           {/* Reactions */}
@@ -629,18 +873,40 @@ export default function RealtimeChatApp() {
               {/* Message Input */}
               <div className="space-y-2">
                 <div className="flex space-x-2">
+                  {/* File Upload Button */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isLoading || !isConnected}
+                    className="flex-shrink-0"
+                  >
+                    <Paperclip className="w-4 h-4" />
+                  </Button>
+
+                  {/* Voice Recording Button */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={isRecording ? stopRecording : startRecording}
+                    disabled={isLoading || !isConnected}
+                    className={`flex-shrink-0 ${isRecording ? "bg-red-100 text-red-600" : ""}`}
+                  >
+                    {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  </Button>
+
                   <Input
                     placeholder="Ketik pesan..."
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyPress={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
                     className="flex-1 border-2 focus:border-purple-400"
-                    disabled={isLoading || !isConnected}
+                    disabled={isLoading || !isConnected || isRecording}
                     maxLength={300}
                   />
                   <Button
                     onClick={sendMessage}
-                    disabled={!input.trim() || isLoading || !isConnected}
+                    disabled={!input.trim() || isLoading || !isConnected || isRecording}
                     className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 flex-shrink-0"
                   >
                     {isLoading ? (
@@ -655,16 +921,12 @@ export default function RealtimeChatApp() {
                   <span>{input.length}/300</span>
                   <div className="flex items-center space-x-2 sm:space-x-4">
                     <span className="flex items-center space-x-1">
-                      {isConnected ? (
-                        <Wifi className="w-3 h-3 text-green-500" />
-                      ) : (
-                        <WifiOff className="w-3 h-3 text-red-500" />
-                      )}
-                      <span className="hidden sm:inline">{isConnected ? "Real-time" : "Offline"}</span>
+                      <ImageIcon className="w-3 h-3" />
+                      <span className="hidden sm:inline">Images</span>
                     </span>
                     <span className="flex items-center space-x-1">
-                      <Shield className="w-3 h-3" />
-                      <span className="hidden sm:inline">AI Moderation</span>
+                      <Mic className="w-3 h-3" />
+                      <span className="hidden sm:inline">Voice</span>
                     </span>
                     <span className="flex items-center space-x-1">
                       <Heart className="w-3 h-3" />
@@ -673,6 +935,20 @@ export default function RealtimeChatApp() {
                   </div>
                 </div>
               </div>
+
+              {/* Hidden File Input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,audio/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) {
+                    handleFileUpload(file)
+                  }
+                }}
+                className="hidden"
+              />
             </CardContent>
           </Card>
         </div>
