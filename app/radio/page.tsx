@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 import { getSupabaseClient } from "@/lib/supabase"
 import Link from "next/link"
+import { AudioDebugPanel } from "@/components/audio-debug"
 
 // Add this import at the top
 // Remove this line:
@@ -62,6 +63,47 @@ const generateUUID = (): string => {
     const v = c === "x" ? r : (r & 0x3) | 0x8
     return v.toString(16)
   })
+}
+
+// Add audio testing functions
+const testAudioPlayback = async () => {
+  try {
+    // Test if we can play audio
+    const testAudio = new Audio()
+    testAudio.volume = 0.1
+
+    // Create a simple beep sound
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const oscillator = audioContext.createOscillator()
+    const gainNode = audioContext.createGain()
+
+    oscillator.connect(gainNode)
+    gainNode.connect(audioContext.destination)
+
+    oscillator.frequency.setValueAtTime(800, audioContext.currentTime)
+    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime)
+
+    oscillator.start()
+    oscillator.stop(audioContext.currentTime + 0.2)
+
+    console.log("✅ Audio test successful")
+    return true
+  } catch (error) {
+    console.error("❌ Audio test failed:", error)
+    return false
+  }
+}
+
+const testMicrophoneAccess = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    console.log("✅ Microphone access granted")
+    stream.getTracks().forEach((track) => track.stop()) // Clean up test stream
+    return true
+  } catch (error) {
+    console.error("❌ Microphone access failed:", error)
+    return false
+  }
 }
 
 const RADIO_CHANNELS = [
@@ -228,17 +270,35 @@ export default function RadioPage() {
   // Initialize WebRTC for voice communication
   const initializeVoiceConnection = async () => {
     try {
+      setLastActivity("Testing audio capabilities...")
+
+      // Test audio first
+      const audioTest = await testAudioPlayback()
+      if (!audioTest) {
+        throw new Error("Audio playback test failed")
+      }
+
+      const micTest = await testMicrophoneAccess()
+      if (!micTest) {
+        throw new Error("Microphone access test failed")
+      }
+
       setLastActivity("Initializing voice connection...")
 
-      // Get user media
+      // Get user media with more specific constraints
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
           sampleRate: 44100,
+          channelCount: 1,
+          volume: 1.0,
         },
       })
+
+      console.log("🎤 Local stream obtained:", stream)
+      console.log("🎤 Audio tracks:", stream.getAudioTracks())
 
       setLocalStream(stream)
       setIsVoiceConnected(true)
@@ -248,18 +308,28 @@ export default function RadioPage() {
       if (localAudioRef.current) {
         localAudioRef.current.srcObject = stream
         localAudioRef.current.muted = true
+        console.log("🎤 Local audio element configured")
+      }
+
+      // Test local audio
+      const audioTracks = stream.getAudioTracks()
+      if (audioTracks.length > 0) {
+        console.log("🎤 Audio track settings:", audioTracks[0].getSettings())
+        console.log("🎤 Audio track constraints:", audioTracks[0].getConstraints())
       }
 
       return stream
     } catch (error) {
-      console.error("Failed to initialize voice:", error)
-      setLastActivity("Voice initialization failed")
+      console.error("❌ Failed to initialize voice:", error)
+      setLastActivity(`Voice initialization failed: ${error.message}`)
       throw error
     }
   }
 
   // Create peer connection
   const createPeerConnection = async (targetUserId: string, targetCallsign: string): Promise<RTCPeerConnection> => {
+    console.log(`🔗 Creating peer connection to ${targetCallsign}`)
+
     const peerConnection = new RTCPeerConnection({
       iceServers: ICE_SERVERS,
     })
@@ -267,6 +337,7 @@ export default function RadioPage() {
     // Add local stream
     if (localStream) {
       localStream.getTracks().forEach((track) => {
+        console.log(`📤 Adding track to peer connection:`, track)
         peerConnection.addTrack(track, localStream)
       })
     }
@@ -274,16 +345,35 @@ export default function RadioPage() {
     // Handle remote stream
     const remoteAudio = new Audio()
     remoteAudio.volume = volume[0] / 100
+    remoteAudio.autoplay = true
+    remoteAudio.controls = false
 
     peerConnection.ontrack = (event) => {
-      console.log("Received remote track from:", targetCallsign)
-      remoteAudio.srcObject = event.streams[0]
-      remoteAudio.play().catch(console.warn)
+      console.log(`📥 Received remote track from ${targetCallsign}:`, event)
+      console.log(`📥 Remote streams:`, event.streams)
+
+      if (event.streams && event.streams[0]) {
+        remoteAudio.srcObject = event.streams[0]
+        console.log(`🔊 Setting remote audio source for ${targetCallsign}`)
+
+        // Try to play with user interaction
+        remoteAudio
+          .play()
+          .then(() => {
+            console.log(`✅ Remote audio playing from ${targetCallsign}`)
+            setLastActivity(`🔊 Receiving audio from ${targetCallsign}`)
+          })
+          .catch((error) => {
+            console.error(`❌ Failed to play remote audio from ${targetCallsign}:`, error)
+            setLastActivity(`❌ Audio playback failed: ${error.message}`)
+          })
+      }
     }
 
     // Handle ICE candidates
     peerConnection.onicecandidate = async (event) => {
       if (event.candidate && supabase) {
+        console.log(`🧊 Sending ICE candidate to ${targetCallsign}`)
         // Send ICE candidate via Supabase
         await supabase.from("radio_signaling").insert({
           from_user: currentUserId,
@@ -298,10 +388,18 @@ export default function RadioPage() {
 
     // Handle connection state changes
     peerConnection.onconnectionstatechange = () => {
-      console.log(`Connection state with ${targetCallsign}:`, peerConnection.connectionState)
+      console.log(`🔗 Connection state with ${targetCallsign}:`, peerConnection.connectionState)
       if (peerConnection.connectionState === "connected") {
-        setLastActivity(`Voice connected to ${targetCallsign}`)
+        setLastActivity(`✅ Voice connected to ${targetCallsign}`)
+        playBeep()
+      } else if (peerConnection.connectionState === "failed") {
+        setLastActivity(`❌ Connection failed to ${targetCallsign}`)
       }
+    }
+
+    // Handle ICE connection state
+    peerConnection.oniceconnectionstatechange = () => {
+      console.log(`🧊 ICE connection state with ${targetCallsign}:`, peerConnection.iceConnectionState)
     }
 
     // Store peer connection
@@ -375,12 +473,20 @@ export default function RadioPage() {
   const startPTT = async () => {
     if (!isConnected || !isPoweredOn || !isVoiceConnected) return
 
+    console.log("🎤 Starting PTT transmission...")
     setIsPTT(true)
     setIsTransmitting(true)
-    setLastActivity("Transmitting voice...")
+    setLastActivity("🎤 Transmitting voice...")
     playBeep()
 
     try {
+      // Check if we have local stream
+      if (!localStream) {
+        throw new Error("No local audio stream available")
+      }
+
+      console.log("🎤 Local stream tracks:", localStream.getTracks())
+
       // Update transmitting status
       if (supabase) {
         await supabase
@@ -393,41 +499,48 @@ export default function RadioPage() {
       }
 
       // Create offers to all users in the same channel
-      for (const user of activeUsers) {
-        if (user.id !== currentUserId && user.channel === currentChannel) {
-          try {
-            let peerConnection = peerConnections.get(user.id)?.connection
+      const channelUsers = activeUsers.filter((user) => user.id !== currentUserId && user.channel === currentChannel)
+      console.log(`📡 Broadcasting to ${channelUsers.length} users in channel ${currentChannel}`)
 
-            if (!peerConnection) {
-              peerConnection = await createPeerConnection(user.id, user.callsign)
-            }
+      for (const user of channelUsers) {
+        try {
+          let peerConnection = peerConnections.get(user.id)?.connection
 
-            // Create and send offer
-            const offer = await peerConnection.createOffer()
-            await peerConnection.setLocalDescription(offer)
-
-            if (supabase) {
-              await supabase.from("radio_signaling").insert({
-                from_user: currentUserId,
-                to_user: user.id,
-                channel: currentChannel,
-                type: "offer",
-                data: JSON.stringify(offer),
-                timestamp: new Date().toISOString(),
-              })
-            }
-          } catch (error) {
-            console.error(`Failed to create offer for ${user.callsign}:`, error)
+          if (!peerConnection) {
+            console.log(`🔗 Creating new peer connection to ${user.callsign}`)
+            peerConnection = await createPeerConnection(user.id, user.callsign)
           }
+
+          // Create and send offer
+          console.log(`📤 Creating offer for ${user.callsign}`)
+          const offer = await peerConnection.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: false,
+          })
+          await peerConnection.setLocalDescription(offer)
+
+          if (supabase) {
+            await supabase.from("radio_signaling").insert({
+              from_user: currentUserId,
+              to_user: user.id,
+              channel: currentChannel,
+              type: "offer",
+              data: JSON.stringify(offer),
+              timestamp: new Date().toISOString(),
+            })
+            console.log(`📤 Offer sent to ${user.callsign}`)
+          }
+        } catch (error) {
+          console.error(`❌ Failed to create offer for ${user.callsign}:`, error)
         }
       }
 
-      setLastActivity("Broadcasting voice...")
+      setLastActivity("📡 Broadcasting voice...")
     } catch (error) {
-      console.error("PTT start error:", error)
+      console.error("❌ PTT start error:", error)
       setIsPTT(false)
       setIsTransmitting(false)
-      setLastActivity("Voice transmission failed")
+      setLastActivity(`❌ Voice transmission failed: ${error.message}`)
     }
   }
 
@@ -805,6 +918,30 @@ export default function RadioPage() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <AudioDebugPanel />
+
+            <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-lg p-3 mb-4">
+              <div className="flex items-center space-x-2 mb-2">
+                <Volume2 className="w-4 h-4 text-yellow-400" />
+                <span className="text-sm font-medium text-yellow-300">Audio Test</span>
+              </div>
+              <Button
+                onClick={async () => {
+                  const audioOk = await testAudioPlayback()
+                  const micOk = await testMicrophoneAccess()
+                  alert(
+                    `Audio Test Results:\n🔊 Playback: ${audioOk ? "✅ OK" : "❌ Failed"}\n🎤 Microphone: ${micOk ? "✅ OK" : "❌ Failed"}`,
+                  )
+                }}
+                variant="outline"
+                size="sm"
+                className="w-full border-yellow-600 text-yellow-300 hover:bg-yellow-600 hover:text-white bg-transparent"
+              >
+                <Volume2 className="w-4 h-4 mr-2" />
+                Test Audio & Microphone
+              </Button>
             </div>
 
             <div className="bg-blue-900/20 border border-blue-600/30 rounded-lg p-3">
