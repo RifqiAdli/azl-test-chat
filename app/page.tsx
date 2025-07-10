@@ -162,36 +162,65 @@ export default function RealtimeChatApp() {
   }
 
   // Convert file to base64
-  const fileToBase64 = (file: File): Promise<string> => {
+  const fileToBase64WithTimeout = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
+
+      // Add timeout (30 seconds)
+      const timeout = setTimeout(() => {
+        reader.abort()
+        reject(new Error("File upload timeout"))
+      }, 30000)
+
       reader.readAsDataURL(file)
-      reader.onload = () => resolve(reader.result as string)
-      reader.onerror = (error) => reject(error)
+      reader.onload = () => {
+        clearTimeout(timeout)
+        resolve(reader.result as string)
+      }
+      reader.onerror = (error) => {
+        clearTimeout(timeout)
+        reject(error)
+      }
     })
   }
 
-  // Handle file upload
+  // Handle file upload with better error handling and compression
   const handleFileUpload = async (file: File) => {
     if (!supabase) return
 
     try {
       setIsLoading(true)
+      setWarningMessage("")
 
-      // Check file size (max 10MB)
-      if (file.size > 10 * 1024 * 1024) {
-        setWarningMessage("❌ File terlalu besar! Maksimal 10MB.")
+      // Check file size (max 5MB instead of 10MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setWarningMessage("❌ File terlalu besar! Maksimal 5MB.")
         setTimeout(() => setWarningMessage(""), 3000)
         return
       }
 
-      // Convert to base64 for storage
-      const base64Data = await fileToBase64(file)
+      // Check file type
+      const isImage = file.type.startsWith("image/")
+      const isAudio = file.type.startsWith("audio/")
 
-      let mediaType: "image" | "audio" = "image"
-      if (file.type.startsWith("audio/")) {
-        mediaType = "audio"
+      if (!isImage && !isAudio) {
+        setWarningMessage("❌ Format file tidak didukung! Hanya gambar dan audio.")
+        setTimeout(() => setWarningMessage(""), 3000)
+        return
       }
+
+      let processedFile = file
+      const mediaType: "image" | "audio" = isImage ? "image" : "audio"
+
+      // Compress image if too large
+      if (isImage && file.size > 1024 * 1024) {
+        // 1MB
+        processedFile = await compressImage(file)
+      }
+
+      // Convert to base64 with progress
+      setWarningMessage("📤 Mengupload file...")
+      const base64Data = await fileToBase64WithTimeout(processedFile)
 
       // Insert message with media
       const { error } = await supabase.from("messages").insert({
@@ -202,18 +231,71 @@ export default function RealtimeChatApp() {
         reactions: {},
         media_type: mediaType,
         media_url: base64Data,
-        media_name: file.name,
+        media_name: processedFile.name,
       })
 
       if (error) throw error
+
       setLastMessageTime(Date.now())
+      setWarningMessage("✅ File berhasil dikirim!")
+      setTimeout(() => setWarningMessage(""), 2000)
     } catch (error) {
       console.error("Error uploading file:", error)
-      setWarningMessage("❌ Gagal mengirim file. Coba lagi!")
-      setTimeout(() => setWarningMessage(""), 3000)
+      setWarningMessage("❌ Gagal mengirim file. Coba file yang lebih kecil!")
+      setTimeout(() => setWarningMessage(""), 4000)
     } finally {
       setIsLoading(false)
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
     }
+  }
+
+  // Add image compression function
+  const compressImage = (file: File): Promise<File> => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement("canvas")
+      const ctx = canvas.getContext("2d")!
+      const img = new Image()
+
+      img.onload = () => {
+        // Calculate new dimensions (max 800px width/height)
+        let { width, height } = img
+        const maxSize = 800
+
+        if (width > height && width > maxSize) {
+          height = (height * maxSize) / width
+          width = maxSize
+        } else if (height > maxSize) {
+          width = (width * maxSize) / height
+          height = maxSize
+        }
+
+        canvas.width = width
+        canvas.height = height
+
+        // Draw and compress
+        ctx.drawImage(img, 0, 0, width, height)
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const compressedFile = new File([blob], file.name, {
+                type: "image/jpeg",
+                lastModified: Date.now(),
+              })
+              resolve(compressedFile)
+            } else {
+              resolve(file) // fallback to original
+            }
+          },
+          "image/jpeg",
+          0.8, // 80% quality
+        )
+      }
+
+      img.src = URL.createObjectURL(file)
+    })
   }
 
   // Start voice recording
@@ -273,7 +355,7 @@ export default function RealtimeChatApp() {
     try {
       setIsLoading(true)
 
-      const base64Data = await fileToBase64(audioFile)
+      const base64Data = await fileToBase64WithTimeout(audioFile)
 
       // Insert voice message
       const { error } = await supabase.from("messages").insert({
@@ -873,7 +955,7 @@ export default function RealtimeChatApp() {
               {/* Message Input */}
               <div className="space-y-2">
                 <div className="flex space-x-2">
-                  {/* File Upload Button */}
+                  {/* File Upload Button with loading state */}
                   <Button
                     variant="outline"
                     size="sm"
@@ -881,7 +963,11 @@ export default function RealtimeChatApp() {
                     disabled={isLoading || !isConnected}
                     className="flex-shrink-0"
                   >
-                    <Paperclip className="w-4 h-4" />
+                    {isLoading ? (
+                      <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Paperclip className="w-4 h-4" />
+                    )}
                   </Button>
 
                   {/* Voice Recording Button */}
@@ -936,11 +1022,11 @@ export default function RealtimeChatApp() {
                 </div>
               </div>
 
-              {/* Hidden File Input */}
+              {/* Hidden File Input with better file types */}
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,audio/*"
+                accept="image/jpeg,image/jpg,image/png,image/gif,image/webp,audio/mp3,audio/wav,audio/m4a,audio/ogg"
                 onChange={(e) => {
                   const file = e.target.files?.[0]
                   if (file) {
