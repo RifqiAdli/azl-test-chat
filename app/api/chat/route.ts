@@ -6,7 +6,7 @@ export async function POST(req: Request) {
     const { message, action } = await req.json()
 
     if (action === "moderate") {
-      // Check for toxic content using AI
+      // Check apakah pesannya ada kata kotor ap g
       const { text } = await generateText({
         model: openai("gpt-4o"),
         prompt: `Analisis pesan ini untuk konten toxic, spam, atau bahasa kasar dalam Bahasa Indonesia dan Inggris. 
