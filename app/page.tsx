@@ -28,7 +28,7 @@ import { getSupabaseClient, type Message, type ChatUser } from "@/lib/supabase"
 const EMOJI_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"]
 const COLORS = ["bg-blue-500", "bg-green-500", "bg-purple-500", "bg-pink-500", "bg-yellow-500", "bg-indigo-500"]
 
-// bhs kotor
+// Indonesian profanity filter
 const INDONESIAN_BAD_WORDS = [
   "anjing",
   "babi",
@@ -69,7 +69,7 @@ export default function RealtimeChatApp() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const userColor = useRef("")
 
-  // inisialisasi supabase grrrrr
+  // Initialize Supabase client
   const [supabase, setSupabase] = useState<ReturnType<typeof getSupabaseClient> | null>(null)
 
   useEffect(() => {
@@ -141,21 +141,6 @@ export default function RealtimeChatApp() {
   }
 
   // Content moderation with AI
-  const moderateContent = async (message: string) => {
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, action: "moderate" }),
-      })
-
-      const result = await response.json()
-      return result.isToxic
-    } catch (error) {
-      console.error("Moderation error:", error)
-      return checkIndonesianProfanity(message)
-    }
-  }
 
   // Load initial messages
   const loadMessages = async () => {
@@ -319,11 +304,11 @@ export default function RealtimeChatApp() {
     setWarningMessage("")
 
     try {
-      // AI Content moderation for advanced detection
-      const isToxic = await moderateContent(input)
+      // Langsung pakai local Indonesian profanity check (super cepat!)
+      const isToxic = checkIndonesianProfanity(input)
 
       if (isToxic) {
-        setWarningMessage("🚫 Pesan mengandung konten yang tidak pantas. Mari jaga suasana tetap positif!")
+        setWarningMessage("🚫 Bahasa kasar terdeteksi! Gunakan bahasa yang sopan ya.")
         setIsLoading(false)
         setTimeout(() => setWarningMessage(""), 4000)
         return
@@ -539,8 +524,8 @@ export default function RealtimeChatApp() {
                   </Badge>
                   <Badge variant="secondary" className="bg-green-100 text-green-700 text-xs">
                     <Shield className="w-3 h-3 mr-1" />
-                    <span className="hidden sm:inline">Moderasi AI</span>
-                    <span className="sm:hidden">AI</span>
+                    <span className="hidden sm:inline">Filter Lokal</span>
+                    <span className="sm:hidden">Local</span>
                   </Badge>
                 </div>
               </div>
