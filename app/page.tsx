@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -85,6 +87,8 @@ export default function RealtimeChatApp() {
   const [recordingTime, setRecordingTime] = useState(0)
   const [playingAudio, setPlayingAudio] = useState<string | null>(null)
   const [selectedImage, setSelectedImage] = useState<{ url: string; name?: string } | null>(null)
+  const [replyingTo, setReplyingTo] = useState<ExtendedMessage | null>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const userColor = useRef("")
@@ -571,6 +575,42 @@ export default function RealtimeChatApp() {
     }
   }
 
+  // Handle drag & drop
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+
+    const files = Array.from(e.dataTransfer.files)
+    const imageFile = files.find((file) => file.type.startsWith("image/"))
+
+    if (imageFile) {
+      handleFileUpload(imageFile)
+    }
+  }
+
+  // Handle paste image
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData.items)
+    const imageItem = items.find((item) => item.type.startsWith("image/"))
+
+    if (imageItem) {
+      const file = imageItem.getAsFile()
+      if (file) {
+        handleFileUpload(file)
+      }
+    }
+  }
+
   const sendMessage = async () => {
     if (!input.trim() || isLoading || !supabase) return
 
@@ -594,18 +634,28 @@ export default function RealtimeChatApp() {
         return
       }
 
-      // Insert message to database
-      const { error } = await supabase.from("messages").insert({
+      // Insert message to database with reply data
+      const messageData: any = {
         user_name: username,
         content: input,
         avatar: username.charAt(0).toUpperCase(),
         user_color: userColor.current,
         reactions: {},
-      })
+      }
+
+      // Add reply data if replying
+      if (replyingTo) {
+        messageData.reply_to_id = replyingTo.id
+        messageData.reply_to_user = replyingTo.user_name
+        messageData.reply_to_content = replyingTo.content.substring(0, 100)
+      }
+
+      const { error } = await supabase.from("messages").insert(messageData)
 
       if (error) throw error
 
       setInput("")
+      setReplyingTo(null) // Clear reply
       setLastMessageTime(Date.now())
     } catch (error) {
       console.error("Error sending message:", error)
@@ -855,7 +905,7 @@ export default function RealtimeChatApp() {
                   {messages.map((message) => (
                     <div key={message.id} className="group">
                       <div
-                        className={`flex items-start space-x-4 ${
+                        className={`flex items-start space-x-3 ${
                           message.user_name === username ? "flex-row-reverse space-x-reverse" : ""
                         }`}
                       >
@@ -874,7 +924,9 @@ export default function RealtimeChatApp() {
                         </Avatar>
 
                         <div className={`flex-1 min-w-0 ${message.user_name === username ? "text-right" : ""}`}>
-                          <div className="flex items-center space-x-2 mb-2">
+                          <div
+                            className={`flex items-center space-x-2 mb-1 ${message.user_name === username ? "justify-end" : ""}`}
+                          >
                             <span className="font-semibold text-slate-800 truncate">{message.user_name}</span>
                             <span className="text-xs text-slate-400 flex-shrink-0">
                               {formatMessageTime(message.created_at)}
@@ -882,7 +934,7 @@ export default function RealtimeChatApp() {
                           </div>
 
                           <div
-                            className={`inline-block p-4 rounded-2xl max-w-[85%] sm:max-w-md break-words shadow-sm ${
+                            className={`inline-block p-3 rounded-2xl max-w-[85%] sm:max-w-md break-words shadow-sm ${
                               message.user_name === username
                                 ? "bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white"
                                 : message.user_name === "System"
@@ -890,6 +942,20 @@ export default function RealtimeChatApp() {
                                   : "bg-white border border-slate-200 text-slate-800"
                             }`}
                           >
+                            {/* Reply Reference */}
+                            {(message as any).reply_to_id && (
+                              <div
+                                className={`mb-2 p-2 rounded-lg border-l-4 text-xs ${
+                                  message.user_name === username
+                                    ? "bg-white/20 border-white/40 text-white/80"
+                                    : "bg-slate-100 border-slate-300 text-slate-600"
+                                }`}
+                              >
+                                <div className="font-medium">↳ Reply to {(message as any).reply_to_user}</div>
+                                <div className="truncate">{(message as any).reply_to_content}</div>
+                              </div>
+                            )}
+
                             {/* Text Content */}
                             <p className="text-sm leading-relaxed mb-2">{message.content}</p>
 
@@ -943,7 +1009,9 @@ export default function RealtimeChatApp() {
 
                           {/* Reactions */}
                           {message.reactions && Object.keys(message.reactions).length > 0 && (
-                            <div className="flex flex-wrap gap-2 mt-3">
+                            <div
+                              className={`flex flex-wrap gap-2 mt-2 ${message.user_name === username ? "justify-end" : ""}`}
+                            >
                               {Object.entries(message.reactions).map(([emoji, count]) => (
                                 <Badge
                                   key={emoji}
@@ -957,19 +1025,34 @@ export default function RealtimeChatApp() {
                             </div>
                           )}
 
-                          {/* Quick Reactions */}
-                          {message.user_name !== username && message.user_name !== "System" && (
-                            <div className="opacity-0 group-hover:opacity-100 transition-opacity mt-3">
-                              <div className="flex space-x-1">
-                                {EMOJI_REACTIONS.slice(0, 4).map((emoji) => (
-                                  <button
-                                    key={emoji}
-                                    onClick={() => addReaction(message.id, emoji)}
-                                    className="text-lg hover:bg-slate-100 rounded-lg p-2 transition-colors"
-                                  >
-                                    {emoji}
-                                  </button>
-                                ))}
+                          {/* Quick Actions */}
+                          {message.user_name !== "System" && (
+                            <div
+                              className={`opacity-0 group-hover:opacity-100 transition-opacity mt-2 ${message.user_name === username ? "text-right" : ""}`}
+                            >
+                              <div className={`flex space-x-2 ${message.user_name === username ? "justify-end" : ""}`}>
+                                {/* Reply Button */}
+                                <button
+                                  onClick={() => setReplyingTo(message)}
+                                  className="text-xs text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded transition-colors"
+                                >
+                                  ↳ Reply
+                                </button>
+
+                                {/* Quick Reactions */}
+                                {message.user_name !== username && (
+                                  <div className="flex space-x-1">
+                                    {EMOJI_REACTIONS.slice(0, 3).map((emoji) => (
+                                      <button
+                                        key={emoji}
+                                        onClick={() => addReaction(message.id, emoji)}
+                                        className="text-sm hover:bg-slate-100 rounded-lg p-1 transition-colors"
+                                      >
+                                        {emoji}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )}
@@ -984,7 +1067,40 @@ export default function RealtimeChatApp() {
               <Separator className="my-4" />
 
               {/* Message Input */}
-              <div className="space-y-3">
+              <div
+                className={`space-y-3 ${isDragOver ? "bg-blue-50 border-2 border-dashed border-blue-300 rounded-lg p-4" : ""}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
+                {/* Reply Preview */}
+                {replyingTo && (
+                  <div className="bg-slate-100 border-l-4 border-purple-500 p-3 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-slate-700">↳ Replying to {replyingTo.user_name}</div>
+                        <div className="text-sm text-slate-600 truncate">{replyingTo.content.substring(0, 100)}</div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setReplyingTo(null)}
+                        className="text-slate-500 hover:text-slate-700"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Drag & Drop Overlay */}
+                {isDragOver && (
+                  <div className="text-center py-8">
+                    <ImageIcon className="w-12 h-12 mx-auto text-blue-500 mb-2" />
+                    <p className="text-blue-600 font-medium">Drop gambar di sini untuk upload</p>
+                  </div>
+                )}
+
                 <div className="flex space-x-3">
                   {/* File Upload Button with loading state */}
                   <Button
@@ -1013,10 +1129,11 @@ export default function RealtimeChatApp() {
                   </Button>
 
                   <Input
-                    placeholder="Ketik pesan kamu..."
+                    placeholder="Ketik pesan kamu... (Ctrl+V untuk paste gambar)"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyPress={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
+                    onPaste={handlePaste}
                     className="flex-1 border-2 focus:border-purple-400 h-12 rounded-xl text-base"
                     disabled={isLoading || !isConnected || isRecording}
                     maxLength={300}
@@ -1039,7 +1156,7 @@ export default function RealtimeChatApp() {
                   <div className="flex items-center space-x-4">
                     <span className="flex items-center space-x-1">
                       <ImageIcon className="w-3 h-3" />
-                      <span className="hidden sm:inline">HD Images</span>
+                      <span className="hidden sm:inline">Drag & Drop</span>
                     </span>
                     <span className="flex items-center space-x-1">
                       <Mic className="w-3 h-3" />
