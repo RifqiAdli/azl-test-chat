@@ -34,7 +34,7 @@ import {
   Hash,
   AtSignIcon as At,
 } from "lucide-react"
-import { getSupabaseClient, type Message, type ChatUser } from "@/lib/supabase"
+import { getSupabaseClient, type Message, type ChatUser, deleteMessage } from "@/lib/supabase"
 
 const EMOJI_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"]
 const COLORS = ["bg-blue-500", "bg-green-500", "bg-purple-500", "bg-pink-500", "bg-yellow-500", "bg-indigo-500"]
@@ -610,6 +610,10 @@ export default function RealtimeChatApp() {
         const messageWithTags = { ...updatedMessage, mentions, hashtags }
         setMessages((prev) => prev.map((msg) => (msg.id === messageWithTags.id ? messageWithTags : msg)))
       })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages" }, (payload) => {
+        const deletedMessageId = payload.old.id;
+        setMessages((prev) => prev.filter((msg) => msg.id !== deletedMessageId));
+      })
       .subscribe()
 
     // Subscribe to user changes
@@ -799,6 +803,19 @@ export default function RealtimeChatApp() {
       console.error("Error adding reaction:", error)
     }
   }
+
+    const handleDeleteMessage = async (messageId: string) => {
+    if (!supabase) return;
+
+    try {
+      await deleteMessage(messageId);
+      setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+    } catch (error) {
+      console.error("Error deleting message:", error);
+      setWarningMessage("❌ Gagal menghapus pesan. Coba lagi!");
+      setTimeout(() => setWarningMessage(""), 3000);
+    }
+  };
 
   // Users Sidebar Component
   const UsersSidebar = () => (
@@ -1213,6 +1230,16 @@ export default function RealtimeChatApp() {
                                     ))}
                                   </div>
                                 )}
+
+                                {/* Delete Button */}
+                                {message.user_name === username && (
+                                  <button
+                                    onClick={() => handleDeleteMessage(message.id)}
+                                    className="text-xs text-red-500 hover:text-red-700 bg-red-100 hover:bg-red-200 px-2 py-1 rounded transition-colors"
+                                  >
+                                    Delete
+                                  </button>
+                                )}
                               </div>
                             </div>
                           )}
@@ -1386,3 +1413,5 @@ export default function RealtimeChatApp() {
     </div>
   )
 }
+
+

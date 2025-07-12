@@ -40,3 +40,13 @@ export type ChatUser = {
   last_seen: string
   created_at: string
 }
+
+
+export const deleteMessage = async (messageId: string) => {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('messages').delete().eq('id', messageId);
+  if (error) throw error;
+}
+
+
+
