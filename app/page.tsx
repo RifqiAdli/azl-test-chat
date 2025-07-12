@@ -963,7 +963,7 @@ export default function RealtimeChatApp() {
             <Alert className="border-emerald-200 bg-emerald-50">
               <Database className="h-4 w-4 text-emerald-600" />
               <AlertDescription className="text-emerald-700 text-sm">
-                ✨ Powered by Supabase real-time database dengan AI content moderation
+                ✨ Tempat Hangout paling seru!
               </AlertDescription>
             </Alert>
           </CardContent>
