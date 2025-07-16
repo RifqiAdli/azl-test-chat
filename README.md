@@ -82,7 +82,8 @@ Project ini terhubung langsung ke Vercel dan akan otomatis ter-deploy setiap kal
 
 Deploy sendiri dengan tombol di bawah:
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/import)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/import/project?template=https://github.com/RifqiAdli/azl-test-chat)
+
 
 ---
 
