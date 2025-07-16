@@ -937,7 +937,7 @@ export default function RealtimeChatApp() {
               <CardTitle className="text-3xl font-bold bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
                 ChatVerse Pro
               </CardTitle>
-              <p className="text-slate-600 mt-3 text-base">Chat multimedia dengan AI moderation & real-time sync</p>
+              <p className="text-slate-600 mt-3 text-base">Chat multimedia dengan AI moderation & real-time sync yang membuat chattingan kalian jadi lebih seru dan lancar!</p>
             </div>
           </CardHeader>
           <CardContent className="space-y-6 px-8 pb-8">
