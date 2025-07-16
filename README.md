@@ -25,17 +25,15 @@ A real-time chat application built with **Next.js**, **Supabase**, and **OpenAI 
 
 ## 📂 Project Structure
 
-app/ # Next.js App Router pages and layouts
-components/ # Reusable UI components
-hooks/ # Custom React hooks
-lib/ # API and utility functions
-public/ # Static assets
-scripts/ # Utility scripts
-styles/ # Global styles and Tailwind config
-
-yaml
-Copy
-Edit
+```
+app/          # Next.js App Router pages and layouts
+components/   # Reusable UI components
+hooks/        # Custom React hooks
+lib/          # API and utility functions
+public/       # Static assets
+scripts/      # Utility scripts
+styles/       # Global styles and Tailwind config
+```
 
 ---
 
@@ -46,40 +44,55 @@ Edit
 ```bash
 git clone https://github.com/RifqiAdli/azl-test-chat.git
 cd azl-test-chat
-2. Install Dependencies
-bash
-Copy
-Edit
+```
+
+### 2. Install Dependencies
+
+```bash
 npm install
 # or
 yarn
-3. Set Up Environment Variables
-Buat file .env.local dan isi seperti ini:
+```
 
-env
-Copy
-Edit
+### 3. Set Up Environment Variables
+
+Buat file `.env.local` dan isi seperti ini:
+
+```env
 NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 OPENAI_API_KEY=your-openai-api-key
-Atau salin dari .env.example jika tersedia.
+```
 
-4. Start the Development Server
-bash
-Copy
-Edit
+Atau salin dari `.env.example` jika tersedia.
+
+### 4. Start the Development Server
+
+```bash
 npm run dev
-Buka http://localhost:3000 di browser untuk melihat aplikasi.
+```
 
-🚀 Deployment
-Project ini terhubung langsung ke Vercel dan akan otomatis ter-deploy setiap kali ada perubahan di branch main.
+Buka [http://localhost:3000](http://localhost:3000) di browser untuk melihat aplikasi.
+
+---
+
+## 🚀 Deployment
+
+Project ini terhubung langsung ke Vercel dan akan otomatis ter-deploy setiap kali ada perubahan di branch `main`.
 
 Deploy sendiri dengan tombol di bawah:
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/import)
 
-📄 License
+---
+
+## 📄 License
+
 MIT License © 2025 Rifqi Adli
 
-🤝 Contributing
-Pull request sangat disambut!
-Untuk perubahan besar, mohon buka issue terlebih dahulu untuk diskusi.
+---
+
+## 🤝 Contributing
+
+Pull request sangat disambut!  
+Untuk perubahan besar, mohon buka *issue* terlebih dahulu untuk diskusi.
