@@ -66,7 +66,9 @@ OPENAI_API_KEY=your-openai-api-key
 
 Atau salin dari `.env.example` jika tersedia.
 
-### 4. Start the Development Server
+### 4. Salin kode SQL yang ada dari folder scripts/create-table.sql ke Supabase (jangan lupa untuk aktifkan mode realtimenya di spabase)
+
+### 5. Start the Development Server
 
 ```bash
 npm run dev
